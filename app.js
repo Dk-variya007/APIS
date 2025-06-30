@@ -3,37 +3,35 @@ const mongoose  = require('mongoose');
 const bcrypt    = require('bcryptjs');
 const jwt       = require('jsonwebtoken');
 const multer    = require('multer');
-const path      = require('path');
-const fs        = require('fs');
+const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 
-const app  = express();
+const app = express();
 const port = process.env.PORT || 3000;
 
-const uploadsDir = path.join(__dirname, 'uploads');
+/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Cloudinary Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key:    process.env.CLOUD_API_KEY,
+  api_secret: process.env.CLOUD_API_SECRET
+});
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Make sure uploads/ dir exists
+  Middlewares
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-}
-
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Static & middle‑ware
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-app.use('/uploads', express.static(uploadsDir));
 app.use(express.json());
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  MongoDB
+  MongoDB Connection
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Schemas
+  Mongoose Schemas
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 const employeeSchema = new mongoose.Schema({
   name:     { type: String, required: true },
@@ -50,13 +48,9 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Multer
+  Multer Setup (Memory Storage)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, uploadsDir),
-  filename:    (_, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
-});
-const upload = multer({ storage });
+const upload = multer({ storage: multer.memoryStorage() });
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Auth Middleware
@@ -106,7 +100,7 @@ app.post('/auth/login', async (req, res) => {
 });
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Employee CRUD (protected)
+  Employee CRUD (Protected)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 app.post('/employees', auth, async (req, res) => {
   try {
@@ -147,38 +141,44 @@ app.delete('/employees/:id', auth, async (req, res) => {
 });
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Image Upload
+  Image Upload to Cloudinary
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 app.post('/employees/:id/upload', auth, upload.single('image'), async (req, res) => {
   try {
-    if (!req.file) {
+    if (!req.file)
       return res.status(400).json({ message: '❌ No image file uploaded' });
-    }
 
-    console.log('Uploaded file:', req.file);
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: 'employee_images' },
+      async (error, result) => {
+        if (error) return res.status(500).json({ message: '❌ Cloudinary upload error', error });
 
-    const employee = await Employee.findById(req.params.id);
-    if (!employee) return res.status(404).json({ message: '❌ Employee not found' });
+        const employee = await Employee.findById(req.params.id);
+        if (!employee) return res.status(404).json({ message: '❌ Employee not found' });
 
-    employee.image = `uploads/${req.file.filename}`;
-    await employee.save();
+        employee.image = result.secure_url;
+        await employee.save();
 
-    res.json({
-      message: '✅ Image uploaded successfully',
-      data: {
-        id: employee._id,
-        name: employee.name,
-        position: employee.position,
-        imageUrl: `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
+        res.json({
+          message: '✅ Image uploaded to Cloudinary',
+          data: {
+            id: employee._id,
+            name: employee.name,
+            position: employee.position,
+            imageUrl: result.secure_url
+          }
+        });
       }
-    });
+    );
+
+    uploadStream.end(req.file.buffer);
   } catch (e) {
     res.status(500).json({ message: '❌ Upload failed', error: e.message });
   }
 });
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Default + Start
+  Default Route + Start Server
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 app.get('/', (_, res) => res.send('🎉 Welcome to the Employee API'));
 
