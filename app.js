@@ -10,17 +10,19 @@ require('dotenv').config();
 const app  = express();
 const port = process.env.PORT || 3000;
 
+const uploadsDir = path.join(__dirname, 'uploads');
+
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Make sure uploads/ dir exists
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
 }
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Static & middle‑ware
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(uploadsDir));
 app.use(express.json());
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -51,7 +53,7 @@ const User = mongoose.model('User', userSchema);
   Multer
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, 'uploads/'),
+  destination: (_, __, cb) => cb(null, uploadsDir),
   filename:    (_, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage });
@@ -149,10 +151,16 @@ app.delete('/employees/:id', auth, async (req, res) => {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 app.post('/employees/:id/upload', auth, upload.single('image'), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ message: '❌ No image file uploaded' });
+    }
+
+    console.log('Uploaded file:', req.file);
+
     const employee = await Employee.findById(req.params.id);
     if (!employee) return res.status(404).json({ message: '❌ Employee not found' });
 
-    employee.image = req.file.path;
+    employee.image = `uploads/${req.file.filename}`;
     await employee.save();
 
     res.json({
@@ -161,7 +169,7 @@ app.post('/employees/:id/upload', auth, upload.single('image'), async (req, res)
         id: employee._id,
         name: employee.name,
         position: employee.position,
-        imageUrl: `${req.protocol}://${req.get('host')}/${req.file.path}`
+        imageUrl: `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
       }
     });
   } catch (e) {
