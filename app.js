@@ -1,60 +1,70 @@
-const express   = require('express');
-const mongoose  = require('mongoose');
-const bcrypt    = require('bcryptjs');
-const jwt       = require('jsonwebtoken');
-const multer    = require('multer');
-const cloudinary = require('cloudinary').v2;
+/********************************************************************
+ *  Employee API – Firebase Storage version
+ *******************************************************************/
+const express    = require('express');
+const mongoose   = require('mongoose');
+const bcrypt     = require('bcryptjs');
+const jwt        = require('jsonwebtoken');
+const multer     = require('multer');
+const admin      = require('firebase-admin');
+const { v4: uuid } = require('uuid');
 require('dotenv').config();
 
-const app = express();
+const app  = express();
 const port = process.env.PORT || 3000;
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Cloudinary Configuration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-cloudinary.config({
-  cloud_name: process.env?.CLOUDINARY_CLOUD_NAME?.trim(),
-  api_key: process.env?.CLOUDINARY_API_KEY?.trim(),
-  api_secret: process.env?.CLOUDINARY_API_SECRET?.trim(),
+/*───────────────────────────────────────────────────────────────────
+  🔑 Firebase Admin SDK  (service account JSON in ENV or file)
+───────────────────────────────────────────────────────────────────*/
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  // Render/production: keep key in an ENV var (stringified JSON)
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} else {
+  // Local dev fallback – DO NOT commit this file
+  serviceAccount = require('./firebase-key.json');
+}
+
+admin.initializeApp({
+  credential   : admin.credential.cert(serviceAccount),
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET   // e.g. "my‑project.appspot.com"
 });
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Middlewares
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-app.use(express.json());
+const bucket = admin.storage().bucket();
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  MongoDB Connection
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  Middlewares
+───────────────────────────────────────────────────────────────────*/
+app.use(express.json());
+const upload = multer({ storage: multer.memoryStorage() });
+
+/*───────────────────────────────────────────────────────────────────
+  MongoDB
+───────────────────────────────────────────────────────────────────*/
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Mongoose Schemas
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  Schemas
+───────────────────────────────────────────────────────────────────*/
 const employeeSchema = new mongoose.Schema({
-  name:     { type: String, required: true },
+  name    : { type: String, required: true },
   position: { type: String, required: true },
-  image:    { type: String }
+  image   : { type: String }
 });
 const Employee = mongoose.model('Employee', employeeSchema);
 
 const userSchema = new mongoose.Schema({
-  name:     { type: String, required: true },
-  email:    { type: String, required: true, unique: true },
+  name    : { type: String, required: true },
+  email   : { type: String, required: true, unique: true },
   password: { type: String, required: true }
 });
 const User = mongoose.model('User', userSchema);
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Multer Setup (Memory Storage)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-const upload = multer({ storage: multer.memoryStorage() });
-
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Auth Middleware
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  Auth helper
+───────────────────────────────────────────────────────────────────*/
 const auth = (req, res, next) => {
   const bearer = req.headers.authorization;
   if (!bearer) return res.status(401).json({ message: '❌ No token provided' });
@@ -68,9 +78,9 @@ const auth = (req, res, next) => {
   }
 };
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Auth Routes
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  Auth routes
+───────────────────────────────────────────────────────────────────*/
 app.post('/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
   try {
@@ -99,9 +109,9 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Employee CRUD (Protected)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  Employee CRUD
+───────────────────────────────────────────────────────────────────*/
 app.post('/employees', auth, async (req, res) => {
   try {
     const employee = await Employee.create(req.body);
@@ -140,46 +150,53 @@ app.delete('/employees/:id', auth, async (req, res) => {
   }
 });
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Image Upload to Cloudinary
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
+/*───────────────────────────────────────────────────────────────────
+  📤 Image Upload → Firebase Storage
+───────────────────────────────────────────────────────────────────*/
 app.post('/employees/:id/upload', auth, upload.single('image'), async (req, res) => {
   try {
-    if (!req.file)
-      return res.status(400).json({ message: '❌ No image file uploaded' });
+    if (!req.file) return res.status(400).json({ message: '❌ No image file uploaded' });
 
-    const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: 'employee_images' },
-      async (error, result) => {
-        if (error) return res.status(500).json({ message: '❌ Cloudinary upload error', error });
+    const filename = `employee_images/${uuid()}_${req.file.originalname}`;
+    const file     = bucket.file(filename);
+    const stream   = file.createWriteStream({
+      metadata: { contentType: req.file.mimetype }
+    });
 
-        const employee = await Employee.findById(req.params.id);
-        if (!employee) return res.status(404).json({ message: '❌ Employee not found' });
-
-        employee.image = result.secure_url;
-        await employee.save();
-
-        res.json({
-          message: '✅ Image uploaded to Cloudinary',
-          data: {
-            id: employee._id,
-            name: employee.name,
-            position: employee.position,
-            imageUrl: result.secure_url
-          }
-        });
-      }
+    stream.on('error', err =>
+      res.status(500).json({ message: '❌ Firebase upload error', error: err.message })
     );
 
-    uploadStream.end(req.file.buffer);
+    stream.on('finish', async () => {
+      // Make the file publicly accessible (optional)
+      await file.makePublic();
+      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
+
+      const employee = await Employee.findById(req.params.id);
+      if (!employee) return res.status(404).json({ message: '❌ Employee not found' });
+
+      employee.image = publicUrl;
+      await employee.save();
+
+      res.json({
+        message: '✅ Image uploaded to Firebase',
+        data: {
+          id      : employee._id,
+          name    : employee.name,
+          position: employee.position,
+          imageUrl: publicUrl
+        }
+      });
+    });
+
+    stream.end(req.file.buffer);
   } catch (e) {
     res.status(500).json({ message: '❌ Upload failed', error: e.message });
   }
 });
 
-/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Default Route + Start Server
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-app.get('/', (_, res) => res.send('🎉 Welcome to the Employee API'));
-
+/*───────────────────────────────────────────────────────────────────
+  Default + Start
+───────────────────────────────────────────────────────────────────*/
+app.get('/', (_, res) => res.send('🎉 Welcome to the Employee API (Firebase Edition)'));
 app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
