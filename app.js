@@ -12,10 +12,10 @@ const port = process.env.PORT || 3000;
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Cloudinary Configuration
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-console.log('🔐 Cloudinary Config:', {
-  cloud_name: process.env.CLOUD_NAME,
-  api_key: process.env.CLOUD_API_KEY,
-  api_secret: process.env.CLOUD_API_SECRET ? 'exists ✅' : '❌ missing'
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
